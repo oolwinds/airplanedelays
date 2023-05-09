@@ -1,0 +1,527 @@
+```{R}
+library(DBI)
+library(RSQLite)
+library(tidyverse)
+library(ggthemes)
+library(mlr3)
+library(mlr3pipelines)
+library(mlr3learners)
+library(skimr)
+library(mlr3viz)
+library(GGally)
+library(glmnet)
+library(paradox)
+library(mlr3tuning)
+library(shiny)
+library(ranger)
+```
+
+```{R}
+conn <- dbConnect(RSQLite::SQLite(),"flights.db")
+```
+
+
+```{R}
+data_2000 <- read.csv("2000.csv", header=TRUE)
+data_2001 <- read.csv("2001.csv", header=TRUE)
+airports <- read.csv("airports.csv", header=TRUE)
+plane_data <- read.csv("plane-data.csv", header=TRUE)
+carriers <- read.csv("carriers.csv", header=TRUE)
+
+dbWriteTable(conn, "ontime", data_2000)
+dbWriteTable(conn, "ontime", data_2001, append=TRUE)
+dbWriteTable(conn, "airports", airports)
+dbWriteTable(conn, "plane_data", plane_data)
+dbWriteTable(conn,"carriers", carriers)
+
+```
+
+#Q1 Time 
+```{R}
+q1a <- dbGetQuery(conn,
+                  "SELECT AVG(ArrDelay + DepDelay) AS Avg_Delay,(CASE 
+                  WHEN deptime > 0000 AND deptime <= 0400 THEN 'Midnight'
+                  WHEN deptime > 1800 AND deptime <= 2400 THEN 'Evening'
+                  WHEN deptime > 1200 AND deptime <= 1800 THEN 'Afternoon'
+                  WHEN deptime > 0700 AND deptime <= 1200 THEN 'Morning'
+                  when deptime > 0400 AND deptime <= 0700 THEN 'Early Morning' END) AS time
+                  FROM ontime
+                  WHERE DepDelay >0 AND ArrDelay > 0 AND Cancelled = 0 AND Diverted = 0
+                  GROUP BY time
+                  ORDER BY Avg_Delay")
+#selecting and changing from numeric and grouping them up by their time frame. 
+```
+
+#Q1 Time Graph
+```{r}
+timevector <- c("Early Morning","Morning","Afternoon","Evening","Midnight") #create a vector to arrange the time in order.
+q1a %>%                                               #pipeline q1 into drop_na pipeline
+  drop_na(time) %>%                                  #drop rows where time column from query q1a is NA
+  ggplot(aes(time, Avg_Delay,fill= ''))+             #pipeline the previous 2 lines into ggplot
+  guides( fill = FALSE)+                             #remove legend from the fill
+  scale_x_discrete(limits = timevector)+            #using the timevector  to arrange the bars according to time
+  geom_bar(stat = "identity")+                      #bar graph
+  theme_fivethirtyeight()+                          #theme
+  theme(axis.title = element_text())+              #due to the theme automatically removing axis labels, we have to add this 
+  labs(title = "Total Average Delay By Time Frame",
+       subtitle = "Which time frame as the lowest total average delay?",            #labelling 
+       x = "Time Period",
+       y = "Total Average Delay (Minutes)")+
+  annotate("text",x="Early Morning",y=6, label = "4am-7am",size = 3.5, fontface = 2)+
+  annotate("text",x="Morning",y=6, label = "7am-12pm",size = 3.5, fontface = 2)+
+  annotate("text",x="Afternoon",y=6, label = "12pm-6pm",size = 3.5, fontface = 2)+         #annotating
+  annotate("text",x="Evening",y=6, label = "6pm-12am",size = 3.5, fontface = 2)+
+  annotate("text",x="Midnight",y=6, label = "12am-4am",size = 3.5, fontface = 2)+
+  geom_text(aes(label = round(Avg_Delay,digits=1),vjust = 0.001,fontface = 2))            #adding values on the top of the bars, for readability
+ggsave("q1ar.png")
+```
+
+#Q1 Day Answer
+
+```{R}
+q1b <- dbGetQuery(conn,
+                  "SELECT (CASE 
+                  WHEN DayOfWeek = 1 THEN 'Monday'
+                  WHEN DayOfWeek = 2 THEN 'Tuesday'
+                  WHEN DayOfWeek = 3 THEN 'Wednesday'
+                  WHEN DayOfWeek = 4 THEN 'Thursday'
+                  WHEN DayOfWeek = 5 THEN 'Friday'
+                  WHEN DayOfWeek = 6 THEN 'Saturday'
+                  WHEN DayOfWeek = 7 THEN 'Sunday' END) AS DayofWeek,
+                  AVG(ArrDelay + DepDelay) AS Avg_Delay
+                  FROM ontime
+                  WHERE DepDelay > 0 AND ArrDelay >0 AND Cancelled = 0 AND Diverted = 0
+                  GROUP BY DayOfWeek
+                  ORDER BY Avg_Delay")                 #selecting and changing from numeric to names 
+print(paste(q1b[1,"DayofWeek"], "is the Day of Week that has the lowest average delay."))
+
+```
+
+#Q1 Day Graph
+
+```{r}
+day <- c("Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday")
+q1b %>%
+  drop_na(Avg_Delay) %>%
+  ggplot(aes(DayofWeek,Avg_Delay,fill=''))+
+  scale_x_discrete(limits = day)+
+  geom_bar(stat= "identity")+
+  theme_fivethirtyeight()+
+  theme(axis.title = element_text())+
+  labs(title = "Average Delay By Day",
+       subtitle = "Which day has the lowest total average delay?",
+       x = "Day",
+       y = "Average Delay (Minutes)")+
+  geom_text(aes(label = round(Avg_Delay,digits=1),vjust = 0.001,fontface = 2))+
+  theme(legend.position="none")
+
+ggsave("q1br.png")
+```
+
+#Q1 Month Answer
+
+```{r}
+q1c <- dbGetQuery(conn,
+                 "SELECT (CASE 
+                  WHEN month = 1 THEN 'Jan'
+                  WHEN month = 2 THEN 'Feb'
+                  WHEN month = 3 THEN 'Mar'
+                  WHEN month = 4 THEN 'Apr'
+                  WHEN month = 5 THEN 'May'
+                  WHEN month = 6 THEN 'Jun'
+                  WHEN month = 7 THEN 'Jul'
+                  WHEN month = 8 THEN 'Aug'
+                  WHEN month = 9 THEN 'Sep'
+                  WHEN month = 10 THEN 'Oct'
+                  WHEN month = 11 THEN 'Nov'
+                  WHEN month = 12 THEN 'Dec' END) AS month, Avg(ArrDelay + DepDelay) AS Avg_Delay
+                 FROM ontime 
+                 WHERE DepDelay >0 AND  ArrDelay >0 AND Cancelled=0 AND Diverted=0 
+                 GROUP BY month 
+                 ORDER BY Avg_Delay
+                 LIMIT 12")                 #selecting and changing from numeric to names 
+print(paste(q1c[1,"month"], "is the month that has the lowest average delay."))
+
+```
+
+#Q1 Month Graph
+
+```{R}
+timemonth <- c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+q1c %>%
+  drop_na(Avg_Delay) %>%
+  ggplot(aes(month,Avg_Delay,fill='red'))+
+  scale_x_discrete(limits = timemonth)+
+  geom_bar(stat = "identity")+
+  theme_fivethirtyeight()+
+  theme(axis.title = element_text())+
+  labs(title = "Average Delay By Month",
+       subtitle = "Which month has the lowest total average delay?",
+       x = "Months",
+       y = "Average Delay (Minutes)")+
+  geom_text(aes(label = round(Avg_Delay,digits=1),vjust = 0.001,fontface=2))+
+  theme(legend.position="none")
+
+ggsave("q1cr.png")
+```
+
+#Q2 Answer
+```{R}
+q2 <- dbGetQuery(conn,
+                  "SELECT (ontime.Year - plane_data.year) AS AGE, AVG(ontime.ArrDelay + ontime.DepDelay) AS Avg_Delay
+                  FROM plane_data JOIN ontime ON plane_data.tailnum = ontime.Tailnum
+                  WHERE DepDelay >0 AND  ArrDelay >0 AND Cancelled=0 AND Diverted=0 AND plane_data.year < 2002
+                  AND plane_data.year != 'None' AND plane_data.year != '' AND ontime.year > plane_data.year
+                  GROUP by AGE
+                  ORDER BY AGE")
+
+#select age by deducting ontime.year from plane_data.year, they are joined using Tailnum column which exists in both of the tables 
+
+```
+
+#Q2 Plot
+```{r}
+q2 %>%
+  ggplot(aes(AGE,Avg_Delay,colour = Avg_Delay))+
+  geom_point(size = 3.5,alpha=0.8)+                  #alpha to adjust the opacity of the data points
+             labs(title = "Airplane Age by Average Delay",
+                  subtitle = "Does age of airplane affect delays?",
+                  x = "Airplane Age",
+                  y = "Average Delay")+
+  theme_fivethirtyeight()+
+  theme(legend.position="none")+                    #to remove the legends of color
+  theme(axis.title = element_text())+
+  geom_smooth(linetype = "dashed",colour = "#fc6584")                 #used to add a line to show the linear correlation
+ggsave("q2r.png")
+
+```
+
+#Q3 Answer
+```{R}
+
+q3a <- dbGetQuery(conn,
+                  "SELECT  Year,Origin,Dest, Count(Dest) AS Total
+                  FROM ontime
+                  WHERE Cancelled=0 AND Diverted=0 AND ontime.Origin = 'ABE'
+                  Group BY Origin,Dest,Year
+                  ORDER BY Origin
+                  LIMIT 200")
+```
+
+#Q3 Graph
+```{R}
+q3a %>% 
+  ggplot(aes(Year, Total,fill=''))+
+  geom_col()+                                  #geom col used to make height represent the values of the data
+  scale_x_discrete(limits=c(2000,2001))+       #added to change the axis range to 2000 and 2001 
+  facet_grid(~Dest)+
+  geom_text(aes(label = round(Total,digits=1),vjust = 0.001,fontface=2))+
+  theme(legend.position="none")                            #create a facet wrap to view many graphs at once
+  
+#Graph is hard coded to ABE, change the Origin in the query to view for the graph for respective Origin airports.
+ggsave("q3r.png")
+```
+
+#Shiny UI section for flights over various locations comparison.
+```{R}
+q3b <- dbGetQuery(conn,
+                  "SELECT Year AS Year2000,Origin,Dest AS Destination,Count(Dest) AS TotalFlights2000
+                  FROM ontime
+                  WHERE Cancelled = 0 AND Diverted= 0 AND Year=2000
+                  GROUP BY Origin,Destination
+                  ORDER BY Year2000,Origin
+                  LIMIT 3342")
+
+```
+
+```{R}
+q3c <- dbGetQuery(conn,
+                  "SELECT Year AS Year2001,Origin AS Origin1,Dest AS Dest1,Count(Dest) AS TotalFlights2001
+                  FROM ontime
+                  WHERE Cancelled = 0 AND Diverted= 0 AND Year=2001
+                  GROUP BY Origin1,Dest1
+                  ORDER BY Origin1
+                  LIMIT 3342")
+
+```
+
+```{R}
+q3d <- append(q3b,q3c)    #combining the q3b and q3c 
+q3e <- as.data.frame(q3d)   #transforming them from a list to a data frame
+q3e[,c("Origin1","Dest1","Year2000","Year2001")] <- list(NULL)   #removing columns that are unnecessary by their column names
+```
+
+```{R}
+#Shiny UI to look at data regarding the change in number of flights from airport A to airport B in from year 2000 to 2001.
+
+ui <- fluidPage(
+  titlePanel("Flights Across Various Locations"),  #labeling the Title of the user interface
+  h4("Total flights from airport A to airport B from 2000 to 2001."), #adding a heading to the user interface
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("Origin","Select an Origin", choices=q3e$Origin)    #labeling the input selections and allowing the choices to come from q3e$Origin column
+                  ),
+    
+      mainPanel(
+        tableOutput("q3edata")                 #after user has chosen their origin, UI will output the data table called q3edata
+      )
+    )
+  )
+
+
+server <- shinyServer(function(input,output){       #adding input and output functions to the server
+  output$q3edata <- renderTable({                  #link the table q3edata back to the UI from the server 
+    originfilter <- subset(q3e, q3e$Origin == input$Origin)  #filtering the data by the origin that the user has chosen,
+  })
+})
+
+
+shinyApp(ui,server)                    #linking both the ui and server and running the application
+
+
+```
+
+
+```{r}
+q4 <- dbGetQuery(conn,"SELECT (DepDelay), (ArrDelay)
+                 FROM ontime
+                 WHERE DepDelay >0 AND ArrDelay >0 AND Diverted = 0 AND Cancelled = 0
+                 GROUP BY DepDelay")
+ 
+```
+
+```{R}
+q4 %>%
+  ggplot(aes(DepDelay,ArrDelay,color=DepDelay))+
+  geom_point(size = 3.5,alpha=0.5)+
+             labs(title = "Departure Delay by Arrival Delay",
+                  subtitle = "Does departure delay affect arrival delay?",
+                  x = "Departure Delay",
+                  y = "Arrival Delay")+
+  theme_fivethirtyeight()+
+  theme(legend.position="none")+
+  theme(axis.title = element_text())+
+  geom_smooth(linetype = "dashed",colour = "#fc6584")
+
+ggsave("q4r.png")
+```
+
+```{r}
+q4b <- dbGetQuery(conn,
+                  "SELECT airports.iata AS iata,COUNT(Origin) AS Delayed_Flights
+                  FROM airports JOIN ontime ON airports.iata = ontime.Origin
+                  WHERE DepDelay > 15 OR ArrDelay > 15 AND Cancelled=0 AND Diverted=0
+                  GROUP BY iata")
+#join iata with Origin columns 
+#Set DepDelay and ArrDelay to > 15 so that we only get planes which are delayed by more than 15 minutes, since 0-15 minutes is considered grace period.
+#also excluding flights which are cancelled or diverted.
+```
+
+```{r}
+q4c <- dbGetQuery(conn,
+                  "SELECT airports.iata as iata2,COUNT(Origin) AS Total_Flights
+                  FROM airports JOIN ontime ON airports.iata = ontime.Origin
+                  WHERE Cancelled = 0 AND Diverted= 0
+                  GROUP BY iata2")
+#select totalflights from all airports which are not cancelled or diverted                
+```
+
+```{r}
+q4d <- append(q4b,q4c)                                                        #combining the 2 dataframe
+q4e <- as.data.frame(q4d)                                                     #transforming them into a dataframe
+q4e[,c("iata2")] <- list(NULL)                                                #removing the unnecessary iata2 column from the df
+q4f <- subset(q4e,Total_Flights >3000)                                        #removing iata with total flights below 3000 to ensure ample sample size
+q4g <- q4f[order(-q4f$Total_Flights),]                                        #Ordering in descending order according to Total flights
+q4h <- as.data.frame(q4g)                                                     #transforming q4g into dataframe 
+q4x <- round((q4h$Delayed_Flights/q4h$Total_Flights * 100),digits=1)          #creating a new column for % of delayed flights of total flights and rounding up
+q4i <- cbind.data.frame(q4h,q4x)                                              #combining the % column and the q4h together  
+q4j <- q4i %>%                                                                #changing the name of % column from q4x into Percentage_of_Delay
+  rename(
+    Percentage_of_Delay=q4x
+  )
+rownames(q4j) <- NULL                                                         #resetting the index into proper index
+q4top10delayiata <- head(q4j,10)                                              #to show only the top 10 values of the data frame
+q4bot10delayiata <- tail(q4j,10)                                              #to show only the bottom 10 values of the data frame
+
+```
+
+```{R}
+q4top10delayiata %>%
+  ggplot(aes(iata,Percentage_of_Delay,fill=''))+
+  geom_bar(stat="identity")+
+  theme_fivethirtyeight()+
+  theme(axis.title = element_text())+
+  labs(title = "Top 10 Busiest Airports",
+       subtitle = "Are airports a factor of Cascading Delays?",
+       x = "iata",
+       y = "% of Delays per Total Flights")+
+  geom_text(aes(label = round(Percentage_of_Delay,digits=1),vjust = 0.001,fontface=2))+
+  theme(legend.position="none")
+
+ggsave("q4top10busyr.png")
+
+```
+
+```{R}
+q4bot10delayiata %>%
+  ggplot(aes(iata,Percentage_of_Delay,fill=''))+
+  geom_bar(stat="identity")+
+  theme_fivethirtyeight()+
+  theme(axis.title = element_text())+
+  labs(title = "Bottom 10 Busiest Airports",
+       subtitle = "Are airports a factor of Cascading Delays?",
+       x = "iata",
+       y = "% of Delays per Total Flights")+
+  geom_text(aes(label = round(Percentage_of_Delay,digits=1),vjust = 0.001,fontface=2))+
+  theme(legend.position="none")
+
+ggsave("q4least10busyr.png")
+```
+
+```{r}
+
+q5 <- dbGetQuery(conn,
+                 "SELECT Year,Month,DayofWeek,DayOfMonth,ArrDelay,DepDelay
+                 FROM ontime
+                 WHERE Cancelled = 0 AND Diverted = 0 AND DepDelay >0 and ArrDelay > 0")
+#selecting the variables to put into the machine learning model.
+```
+
+
+```{r}
+#setting up a task for regression and specifying the response variable.
+task <- TaskRegr$new('delay',backend = q5,target = 'DepDelay')
+measure <- msr('regr.mse')
+
+#choosing a learner, we are using ride regression
+learner_ridge <- lrn('regr.glmnet')
+learner_ridge$param_set$values <- list(alpha = 0)
+
+
+#setting up the training and testing sets and setting the amount to split, we use 75% training,25% test
+train_set <- sample(task$nrow, task$nrow*0.75)
+test_set <- setdiff(seq_len(task$nrow), train_set)
+
+
+#imputing the mean of the variable's other values if there are missing values.
+learner_gr <- po('scale') %>>%
+  po('imputemean') %>>%
+  po(learner_ridge)
+glrn_ridge <- GraphLearner$new(learner_gr)
+
+
+#setting up turning environment 
+lambda_tuning <- ParamSet$new(list(ParamDbl$new('regr.glmnet.lambda',lower=0.01,upper=2)))
+tuner <- tnr('grid_search')
+terminator <- trm('evals', n_evals = 20)
+
+#placing everything together into a new learner with all the modifications done to it.
+learner_new <- AutoTuner$new(
+  learner = glrn_ridge,
+  resampling = rsmp('cv',folds = 3),
+  measure = measure,
+  search_space = lambda_tuning,
+  terminator = terminator,
+  tuner = tuner
+)
+
+#training the set using the new model using the training and test set.
+learner_new$train(task,row_ids = train_set)
+
+#predicting the mse score 
+learner_new$predict(task, row_ids = test_set)$score()
+
+#creating the prediction model 
+prediction <- predict(learner_new, task$data(1:2000), predict_type = "<Prediction>")
+
+prediction
+```
+
+
+```{r}
+prediction %>%
+  ggplot(aes(response,truth,colour = truth))+
+  geom_point(size = 2.5,alpha=0.4)+                 
+             labs(title = "Predicted Value vs Actual Value",
+                  subtitle = "How well does our model predict Departure Delay?",
+                  x = "Predicted Delay",
+                  y = "Actual Delay")+
+  theme_fivethirtyeight()+
+  theme(legend.position="none")+                   
+  theme(axis.title = element_text())+
+  geom_smooth(linetype = "dashed",colour = "#fc6584",method=lm,level=0.90)                 
+
+ggsave("q5r.png")
+```
+
+
+```{r}
+#setting up random forest learner using ranger package
+learner_rf <- lrn('regr.ranger')
+learner_rf$param_set$values <- list(min.node.size = 4)
+
+#imputing mean for missing values using the mean of the variable's other values
+gr_rf <- po('scale') %>>%
+  po('imputemean') %>>%
+  po(learner_rf)
+
+#I have set low values as my pc takes too long to handle large values of lower and upper parameters.
+glrn_rf <- GraphLearner$new(gr_rf)
+tune_ntrees <- ParamSet$new(list(
+  ParamInt$new('regr.ranger.num.trees',lower=1,upper=10)
+))
+
+#placing everything into new learner with the modifications done 
+at_rf <- AutoTuner$new(
+  learner = glrn_rf,
+  resampling = rsmp('cv',folds = 3),
+  measure = measure,
+  search_space = tune_ntrees,
+  terminator = terminator,
+  tuner = tuner
+)
+
+#training the set 
+at_rf$train(task,row_ids=train_set)
+#predicting the mse score
+at_rf$predict(task, row_ids = test_set)$score()
+```
+
+```{r}
+#list of learners
+lrn_list <-list(glrn_ridge,
+                  at_rf)
+set.seed(100)
+
+#set the benchmark design and run the comparisons
+bm_design <- benchmark_grid(task = task, resamplings = rsmp('cv',
+                                                            folds=3),learners= lrn_list)
+bmr <- benchmark(bm_design,store_models=TRUE)
+
+bmr_measure <- bmr$aggregate(measure)  #measuring the aggregate results of the 2 models
+bmr_measure
+```
+
+```{r}
+#plotting the model 
+modelname <- c("Ridge Regrssion","Random Forest")
+
+
+bmr_plot <- bmr %>%
+  ggplot(aes(learner_id,regr.mse))+
+  geom_boxplot(fill = "blue", alpha = 0.5, outlier.colour = "red",outlier.shape=1)+
+  scale_x_discrete(labels=modelname)+
+  labs(x = "Learner",y="Regression Mean Squared Error",title = "Box Plot of 2 Models")+
+  labs(subtitle = "Showing the Mean Square Error of the two models.")+
+  theme_fivethirtyeight()+
+  theme(legend.position="none")+ 
+  geom_text(aes(label = round(regr.mse,digits=1),vjust = 0.001,fontface=2))
+  
+  
+bmr_plot  
+
+
+
+
+ggsave("bmrplot.png")
+```
