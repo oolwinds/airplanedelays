@@ -7,6 +7,9 @@ This is my first ever data analysis project. For this project, I analyzed over 1
 1. Python
 2. R
 3. SQLite
+![tabkes](https://github.com/oolwinds/airplanedelays/assets/130780065/9414e516-d9b2-4a26-ad1e-9d2e53affec2)
+
+![dbtool](https://github.com/oolwinds/airplanedelays/assets/130780065/fa8938cd-95c2-4cb5-a80e-6e7b4c7090d7)
 
 ### Data Analysis 
 The initial stage involved thorough exploratory data analysis (EDA). We used SQLite to manage our large dataset and perform complex queries to extract valuable insights. The analysis included the relationship between departure and arrival delays, the busiest and least busy airports, and the effect of these parameters on flight delays.
